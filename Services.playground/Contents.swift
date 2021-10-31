@@ -5,6 +5,14 @@
 import UIKit
 import Combine
 
+struct Comment: Codable {
+    let postId: Int
+    let id: Int
+    let name: String
+    let email: String
+    let body: String
+}
+
 final class ApiClient {
 
     typealias Parameters = [String: String]
@@ -14,11 +22,11 @@ final class ApiClient {
     
     static let shared : ApiClient = ApiClient()
     private init() {
-        baseURL = URL(string: "https://jsonplaceholder.typicode.com/")
+        baseURL = URL(string: "https://jsonplaceholder.typicode.com")
         decoder = JSONDecoder()
     }
     
-    // MARK: - Generic GET
+    //  Generic GET
     func get<T: Codable>(endpoint: Endpoint,
                          parameters: Parameters = [:]) -> AnyPublisher<Result<T, APIError>, Never> {
         guard let url = baseURL else {
@@ -35,7 +43,7 @@ final class ApiClient {
         request.httpMethod = "GET"
         return URLSession.shared.dataTaskPublisher(for: request)
             .map({ $0.data})
-//            .print()
+            .print()
             .decode(type: T.self, decoder: decoder)
             .map({ Result.success($0) })
             .catch({ error -> AnyPublisher<Result<T, APIError>, Never> in
@@ -75,7 +83,42 @@ final class ApiClient {
         }
         dataTask.resume()
     }
+    
+    
+    //  Generic POST
+    func post<T: Codable, E: Encodable>(endpoint: Endpoint,
+                                       parameter: E,
+                                       completionHandler: @escaping (Result<T, APIError>)->Void) {
+        guard let url = baseURL else {
+            completionHandler(.failure(.invalidRequest))
+            return
+        }
+        guard let httpBody = try? JSONEncoder().encode(parameter) else {
+            completionHandler(.failure(.invalidRequest))
+            return
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.httpBody = httpBody
+        request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        let dataTask = URLSession.shared.dataTask(with: request) { (data, response, error) in
+            guard let data = data else {
+                completionHandler(.failure(.invalidRequest))
+                return
+            }
+            do {
+                let object = try self.decoder.decode(T.self, from: data)
+                completionHandler(.success(object))
+            } catch let merror {
+                completionHandler(.failure(.jsonDecodingError(error: merror)))
+            }
+        }
+        dataTask.resume()
+    }
 }
+
+
 
 public enum Endpoint {
     case posts
@@ -101,3 +144,21 @@ public enum APIError: Error {
     case networkError(error: Error)
 }
 
+class Consumer {
+    
+    var cancellables = Set<AnyCancellable>()
+    
+    func getComments() {
+        ApiClient.shared.get(endpoint: .comments).sink { (result: Result<[Comment], APIError>) in
+            switch result {
+            case .success(let comments):
+                print("[LOG] Comments: \(comments)")
+            case .failure(let merror):
+                print("[LOG] Error: \(merror.localizedDescription)")
+            }
+        }.store(in: &cancellables)
+    }
+}
+
+let consumer = Consumer()
+consumer.getComments()
